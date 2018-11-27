@@ -38,7 +38,7 @@ function start() {
     echo "Started (Env: ${APP_ENV})";
 
     ## If db is not started run build and run main start
-    if [ -z "$(docker ps | grep -E "\b${COMPOSE_PROJECT_NAME}_main_[0-9]+\b")" ]; then
+    if [ -z `_mainContainer` ]; then
         docker-compose $(_dockerComposeFiles) up -d
         _save
         exit 0
@@ -48,7 +48,7 @@ function start() {
     export DOCKER_HTTP_PORT2=$(echo "$DOCKER_HTTP_PORT+1" | bc);
 
     # Get Port Number
-    if [ "$(docker ps | grep ${COMPOSE_PROJECT_NAME}_main | tr ' ' "\n" | grep tcp)" == "0.0.0.0:$DOCKER_HTTP_PORT1->80/tcp" ]; then
+    if [ "$(docker ps --filter id=`_mainContainer` | tr ' ' "\n" | grep tcp)" == "0.0.0.0:$DOCKER_HTTP_PORT1->80/tcp" ]; then
       export DOCKER_HTTP_PORT="$DOCKER_HTTP_PORT2"
       export STOP_DOCKER_HTTP_PORT="$DOCKER_HTTP_PORT1"
     else
@@ -143,24 +143,24 @@ function remove() {
 }
 # Open psql client on db docker container
 function psql() {
-    docker exec -it ${COMPOSE_PROJECT_NAME}_db_1 bash -c "PGPASSWORD="\$POSTGRES_PASSWORD" psql -U postgres \$POSTGRES_DB"
+    docker exec -it $(_oneContainer db) bash -c "PGPASSWORD="\$POSTGRES_PASSWORD" psql -U postgres \$POSTGRES_DB"
 }
 # Open mysql client on db docker container
 function mysql() {
-    docker exec -it ${COMPOSE_PROJECT_NAME}_db_1 bash -c "MYSQL_PWD=\${MYSQL_ROOT_PASSWORD} mysql -uroot \${MYSQL_DATABASE}"
+    docker exec -it $(_oneContainer db) bash -c "MYSQL_PWD=\${MYSQL_ROOT_PASSWORD} mysql -uroot \${MYSQL_DATABASE}"
 }
 
 
 # Open PHPMyAdmin
 function pma() {
-    echo "Open PHPMyAdmin for ${COMPOSE_PROJECT_NAME}_db_1";
+    echo "Open PHPMyAdmin for $(_oneContainer db)";
 
     # Try Linux xdg-open otherwise OSX open
     xdg-open http://$(_dockerHost):${GANTRY_PMA_PORT}/ 2> /dev/null > /dev/null || \
     open http://$(_dockerHost):${GANTRY_PMA_PORT}// 2> /dev/null > /dev/null
 
     docker run --rm \
-        --link "${COMPOSE_PROJECT_NAME}_db_1:db" \
+        --link "$(_oneContainer db):db" \
         -e "PMA_HOST=db" \
         -e "PMA_PORT=3306" \
         -e "PMA_USER=root" \
@@ -171,14 +171,14 @@ function pma() {
 }
 
 function pgadmin() {
-    echo "Open pgAdmin for ${COMPOSE_PROJECT_NAME}_db_1";
+    echo "Open pgAdmin for $(_oneContainer db)";
 
     # Try Linux xdg-open otherwise OSX open
     xdg-open http://$(_dockerHost):5050/ 2> /dev/null > /dev/null || \
     open http://$(_dockerHost):5050// 2> /dev/null > /dev/null
 
     docker run --name ${COMPOSE_PROJECT_NAME}-pgadmin \
-               --link "${COMPOSE_PROJECT_NAME}_db_1:postgres" \
+               --link "$(_oneContainer db):postgres" \
                -p 5050:5050 \
                -d fenglc/pgadmin4
 }
@@ -210,8 +210,8 @@ function restore-prod() {
 
         # TODO: postgres restore
         gunzip -c $1 > data/backup/backup.sql
-        docker exec -it ${COMPOSE_PROJECT_NAME}_db_1 bash -c "echo \"drop database IF EXISTS \$MYSQL_DATABASE;create database \$MYSQL_DATABASE\" | mysql -h $DB_PROD -p -u$DB_PROD_USER"
-        docker exec -it ${COMPOSE_PROJECT_NAME}_db_1 bash -c "cat /backup/backup.sql | mysql -h $DB_PROD -u$DB_PROD_USER -p \$MYSQL_DATABASE"
+        docker exec -it $(_oneContainer db) bash -c "echo \"drop database IF EXISTS \$MYSQL_DATABASE;create database \$MYSQL_DATABASE\" | mysql -h $DB_PROD -p -u$DB_PROD_USER"
+        docker exec -it $(_oneContainer db) bash -c "cat /backup/backup.sql | mysql -h $DB_PROD -u$DB_PROD_USER -p \$MYSQL_DATABASE"
         echo "DB Restore using $1"
     fi
 }
@@ -219,7 +219,7 @@ function restore-prod() {
 function backup-prod() {
     # TODO: postgres backup
     [ -z $1 ] && local BU_FILE="backup-$(date +%Y%m%d%H%M)" || local BU_FILE="$1"
-    docker exec ${COMPOSE_PROJECT_NAME}_db_1 bash -c "mysqldump -h $DB_PROD -u$DB_PROD_USER \$MYSQL_DATABASE > /backup/backup.sql"
+    docker exec $(_oneContainer db) bash -c "mysqldump -h $DB_PROD -u$DB_PROD_USER \$MYSQL_DATABASE > /backup/backup.sql"
     cat data/backup/backup.sql > ${BU_FILE}.sql
     gzip ${BU_FILE}.sql
     echo "DB Backup $BU_FILE"
@@ -227,21 +227,21 @@ function backup-prod() {
 
 # Open mysql client to production (RDS)
 function mysql-prod() {
-    docker exec -it ${COMPOSE_PROJECT_NAME}_db_1 bash -c "mysql -h $DB_PROD -p -u$DB_PROD_USER"
+    docker exec -it $(_oneContainer db) bash -c "mysql -h $DB_PROD -p -u$DB_PROD_USER"
 }
 
 
 # Open terminal console on db docker container
 function console_db() {
-    docker exec -it ${COMPOSE_PROJECT_NAME}_db_1 bash
+    docker exec -it $(_oneContainer db) bash
 }
 
 # Restore DB from file (filename.sql.gz)
 function restore() {
     # TODO: postgres restore
     gunzip -c $1 > data/backup/backup.sql
-    docker exec -it ${COMPOSE_PROJECT_NAME}_db_1 bash -c "echo \"drop database \$MYSQL_DATABASE;create database \$MYSQL_DATABASE\" | MYSQL_PWD=\$MYSQL_ROOT_PASSWORD mysql -uroot"
-    docker exec -it ${COMPOSE_PROJECT_NAME}_db_1 bash -c "cat /backup/backup.sql | MYSQL_PWD=\$MYSQL_ROOT_PASSWORD mysql -uroot \$MYSQL_DATABASE"
+    docker exec -it $(_oneContainer db) bash -c "echo \"drop database \$MYSQL_DATABASE;create database \$MYSQL_DATABASE\" | MYSQL_PWD=\$MYSQL_ROOT_PASSWORD mysql -uroot"
+    docker exec -it $(_oneContainer db) bash -c "cat /backup/backup.sql | MYSQL_PWD=\$MYSQL_ROOT_PASSWORD mysql -uroot \$MYSQL_DATABASE"
     echo "DB Restore using $1"
 }
 
@@ -249,7 +249,7 @@ function restore() {
 function sql() {
     # TODO: postgres restore
     cat $1 > data/backup/backup.sql
-    docker exec -it ${COMPOSE_PROJECT_NAME}_db_1 bash -c "cat /backup/backup.sql | MYSQL_PWD=\$MYSQL_ROOT_PASSWORD mysql -uroot \$MYSQL_DATABASE"
+    docker exec -it $(_oneContainer db) bash -c "cat /backup/backup.sql | MYSQL_PWD=\$MYSQL_ROOT_PASSWORD mysql -uroot \$MYSQL_DATABASE"
     echo "DB Restore using $1"
 }
 
@@ -257,7 +257,7 @@ function sql() {
 function backup() {
     # TODO: postgres backup
     [ -z $1 ] && local BU_FILE="backup-$(date +%Y%m%d%H%M)" || local BU_FILE="$1"
-    docker exec ${COMPOSE_PROJECT_NAME}_db_1 bash -c "MYSQL_PWD=\$MYSQL_ROOT_PASSWORD mysqldump -uroot \$MYSQL_DATABASE > /backup/backup.sql"
+    docker exec $(_oneContainer db) bash -c "MYSQL_PWD=\$MYSQL_ROOT_PASSWORD mysqldump -uroot \$MYSQL_DATABASE > /backup/backup.sql"
     cat data/backup/backup.sql > ${BU_FILE}.sql
     gzip ${BU_FILE}.sql
     echo "DB Backup $BU_FILE"
@@ -653,7 +653,7 @@ UPDATE wp_options SET option_value="http://$url/" WHERE option_name="siteurl";
 UPDATE wp_options SET option_value="http://$url/" WHERE option_name="home";
 EOF
 
-    docker exec -it ${COMPOSE_PROJECT_NAME}_db_1 bash -c "cat /backup/backup.sql | MYSQL_PWD=\$MYSQL_ROOT_PASSWORD mysql -uroot \$MYSQL_DATABASE"
+    docker exec -it $(_oneContainer db) bash -c "cat /backup/backup.sql | MYSQL_PWD=\$MYSQL_ROOT_PASSWORD mysql -uroot \$MYSQL_DATABASE"
     echo "Set host and site url to http://$url/"
 }
 
